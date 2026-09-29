@@ -1,0 +1,4 @@
+http://evil-site.com
+https://fake-login-page.net
+http://long-phishing-url-to-test-length-and-blacklist-check-at-the-same-time.org
+https://google.com/search?q=very+long+url+test+case+to+see+if+the+length+check+works+properly+for+the+detector+project&rlz=1C5CHFA_enUS844US844&oq=very+long+url+test+case+to+see+if+the+length+check+works+properly+for+the+detector+project&aqs=chrome..69i57.7797j0j4&sourceid=chrome&ie=UTF-8

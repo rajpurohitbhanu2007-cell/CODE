@@ -1,0 +1,529 @@
+10.5.0.1  (gateway / FortiGate)
+│
+├── 808/tcp
+│   └── HTTP
+│       └── 302 redirect
+│           └── HTTPS :9512
+│
+└── 9512/tcp
+    └── HTTPS
+        └── FortiGate administration interface
+            └── /login
+
+
+# Network Reconnaissance and Gateway Service Assessment Report
+
+**Date:** 12 August 2026
+**Target Network:** `10.5.0.0/24`
+**Gateway:** `10.5.0.1`
+**Scanning Host:** `10.5.0.90` (`git-H61H2-MV`)
+**Tool:** Nmap 7.80, cURL, OpenSSL
+**Assessment Type:** Local network/service reconnaissance
+
+---
+
+## 1. Executive Summary
+
+A network reconnaissance assessment was performed from host `10.5.0.90` against the local `10.5.0.0/24` network.
+
+Nmap host discovery identified **44 active hosts** on the `/24` network.
+
+The local scanning system, `10.5.0.90`, was also assessed. Nmap's default 1,000 TCP ports were all reported as **closed**, indicating that no commonly scanned TCP services were listening on the host at the time of testing.
+
+The network gateway at `10.5.0.1` initially did not respond to Nmap's default host-discovery probes. A subsequent scan using `-Pn` confirmed that the gateway was reachable.
+
+A full TCP port scan of the gateway identified:
+
+* **TCP/808 — Open**
+* **TCP/9512 — Open**
+* Most other TCP ports — **Filtered**
+* One additional port — **Closed**
+
+Further HTTP testing established that TCP/808 provides an HTTP service that redirects clients to HTTPS on TCP/9512.
+
+The HTTPS service on TCP/9512 was identified as a **Fortinet FortiGate administration interface** based on the returned HTML, including Fortinet-specific page elements and cookie names.
+
+No authentication bypass, exploitation, password testing, or modification of the gateway was performed.
+
+---
+
+## 2. Scope
+
+The assessment covered:
+
+```text
+Network: 10.5.0.0/24
+Gateway: 10.5.0.1
+Local host: 10.5.0.90
+```
+
+The assessment consisted of:
+
+1. Local network host discovery.
+2. TCP service discovery.
+3. Service/version detection.
+4. Gateway port enumeration.
+5. HTTP/HTTPS response inspection.
+6. Identification of the gateway management interface.
+
+---
+
+## 3. Host Discovery
+
+The following command was executed:
+
+```bash
+nmap -sn 10.5.0.0/24
+```
+
+### Result
+
+Nmap reported:
+
+```text
+256 IP addresses scanned
+44 hosts up
+```
+
+The responding hosts included:
+
+```text
+10.5.0.3
+10.5.0.4
+10.5.0.5
+10.5.0.6
+10.5.0.8
+10.5.0.12
+10.5.0.15
+10.5.0.18
+10.5.0.21
+10.5.0.22
+10.5.0.26
+10.5.0.29
+10.5.0.30
+10.5.0.32
+10.5.0.33
+10.5.0.36
+10.5.0.38
+10.5.0.40
+10.5.0.44
+10.5.0.45
+10.5.0.47
+10.5.0.48
+10.5.0.60
+10.5.0.67
+10.5.0.69
+10.5.0.83
+10.5.0.86
+10.5.0.88
+10.5.0.90
+10.5.0.91
+10.5.0.99
+10.5.0.108
+10.5.0.143
+10.5.0.147
+10.5.0.148
+10.5.0.154
+10.5.0.163
+10.5.0.171
+10.5.0.176
+10.5.0.209
+10.5.0.238
+10.5.0.239
+10.5.0.240
+10.5.0.249
+```
+
+The scanning host was identified as:
+
+```text
+git-H61H2-MV (10.5.0.90)
+```
+
+### Finding
+
+There are **44 responsive hosts** on the local `/24` network.
+
+This result represents hosts responding to Nmap's discovery probes; it should not necessarily be interpreted as a complete inventory of every physical device on the network.
+
+---
+
+## 4. Local Host Assessment
+
+The scanning machine was tested using:
+
+```bash
+nmap -sV 10.5.0.90
+```
+
+### Result
+
+```text
+Host is up.
+
+All 1000 scanned ports on git-H61H2-MV (10.5.0.90) are closed.
+```
+
+### Finding
+
+No open TCP services were detected among Nmap's default 1,000 TCP ports on the scanning host.
+
+This indicates a relatively small network-exposed TCP attack surface based on the ports tested.
+
+---
+
+## 5. Initial Gateway Assessment
+
+The gateway was initially scanned using:
+
+```bash
+nmap -sV 10.5.0.1
+```
+
+Nmap reported:
+
+```text
+Host seems down.
+```
+
+Because network devices can intentionally block or ignore host-discovery probes, the gateway was rescanned using `-Pn`:
+
+```bash
+nmap -Pn -sV 10.5.0.1
+```
+
+### Result
+
+```text
+Host is up.
+
+PORT    STATE    SERVICE
+113/tcp closed   ident
+808/tcp open     tcpwrapped
+```
+
+The scan also reported:
+
+```text
+998 filtered ports
+```
+
+### Finding
+
+The gateway was reachable, but most of the tested ports were filtered by the device or an associated firewall.
+
+TCP/808 was identified as open.
+
+---
+
+## 6. HTTP Service Investigation
+
+TCP/808 was investigated using:
+
+```bash
+curl -i http://10.5.0.1:808/
+```
+
+The gateway returned:
+
+```text
+HTTP/1.1 302 Found
+Location: https://10.5.0.1:9512/
+Content-Type: text/html; charset=iso-8859-1
+```
+
+### Finding
+
+TCP/808 provides an HTTP service that redirects clients to:
+
+```text
+https://10.5.0.1:9512/
+```
+
+This indicates that the gateway expects administration through HTTPS rather than unencrypted HTTP.
+
+---
+
+## 7. Full TCP Port Scan
+
+A complete TCP port scan was performed:
+
+```bash
+nmap -Pn -p- --open 10.5.0.1
+```
+
+### Result
+
+```text
+PORT     STATE SERVICE
+808/tcp  open  ccproxy-http
+9512/tcp open  unknown
+```
+
+Nmap reported:
+
+```text
+65532 filtered ports
+1 closed port
+```
+
+### Important Note
+
+The `ccproxy-http` designation for TCP/808 is an Nmap service-name classification. It does **not** establish that CCProxy software is running.
+
+The subsequent cURL test demonstrated that the port is serving HTTP and redirecting to the HTTPS management service.
+
+### Finding
+
+Only **two open TCP ports** were identified on the gateway during the full TCP scan:
+
+```text
+TCP/808
+TCP/9512
+```
+
+This represents a relatively restricted TCP exposure from the scanning host.
+
+---
+
+## 8. HTTPS Service Investigation
+
+The HTTPS endpoint was tested with:
+
+```bash
+curl -k -I https://10.5.0.1:9512/
+```
+
+The service returned:
+
+```text
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+X-Frame-Options: SAMEORIGIN
+Content-Security-Policy: frame-ancestors 'self'
+X-UA-Compatible: IE=Edge
+```
+
+TLS information identified:
+
+```text
+Protocol: TLSv1.2
+Cipher: ECDHE-RSA-AES256-GCM-SHA384
+RSA key: 2048 bit
+```
+
+Certificate verification returned:
+
+```text
+Verify return code: 18 (self-signed certificate)
+```
+
+### Finding
+
+TCP/9512 is an HTTPS web service using TLS 1.2.
+
+The certificate is self-signed. Self-signed certificates are commonly used for locally administered network appliances, although clients will not automatically trust such certificates unless the certificate or issuing CA has been explicitly trusted.
+
+---
+
+## 9. HTTPS Root Page
+
+The following request was performed:
+
+```bash
+curl -k https://10.5.0.1:9512/
+```
+
+The response contained:
+
+```html
+<script language=javascript>
+top.location="/login";
+</script>
+```
+
+### Finding
+
+The root HTTPS page redirects users to:
+
+```text
+/login
+```
+
+This is consistent with a web-based administrative interface requiring authentication.
+
+---
+
+## 10. Login Page Analysis
+
+The login page was retrieved using:
+
+```bash
+curl -k -i https://10.5.0.1:9512/login
+```
+
+The response contained several application-specific cookies, including:
+
+```text
+APSCOOKIE_...
+VDOM_...
+csrftoken_...
+ccsrftoken_...
+CENTRAL_MGMT_OVERRIDE_...
+EDIT_HISTORY_...
+FILE_DOWNLOADING_...
+```
+
+The HTML also contained:
+
+```html
+<f-icon class="ftnt-fortinet-grid icon-xl"></f-icon>
+```
+
+and references to:
+
+```text
+main-melongene.css
+```
+
+The login form contained fields for:
+
+```text
+User Name
+Password
+Token Code
+```
+
+The page also referenced:
+
+```text
+login.js
+```
+
+### Product Identification
+
+The HTML contains strong Fortinet-specific indicators, including the Fortinet UI element and Fortinet-related cookie/application naming.
+
+The management interface was therefore identified as a:
+
+**Fortinet FortiGate web administration interface.**
+
+The exact FortiGate hardware model and firmware version were not established from the collected information.
+
+---
+
+## 11. Service Summary
+
+| Host        |                Port | Protocol | Status          | Observation                    |
+| ----------- | ------------------: | -------- | --------------- | ------------------------------ |
+| `10.5.0.1`  |                 808 | HTTP     | Open            | Redirects to HTTPS/9512        |
+| `10.5.0.1`  |                9512 | HTTPS    | Open            | FortiGate management interface |
+| `10.5.0.1`  |                 113 | TCP      | Closed          | No service listening           |
+| `10.5.0.1`  |     Other TCP ports | TCP      | Mostly filtered | Firewall/device filtering      |
+| `10.5.0.90` | Default 1,000 ports | TCP      | Closed          | No open services detected      |
+
+---
+
+## 12. Security Observations
+
+### 12.1 Management Interface Exposure
+
+The FortiGate management interface is reachable from the local `10.5.0.0/24` network on TCP/9512.
+
+This is not necessarily a vulnerability. It is common for network administrators to manage a FortiGate through an internal management interface.
+
+However, management access should ideally be restricted to trusted management networks or authorized administrator hosts.
+
+### 12.2 HTTP Redirect
+
+TCP/808 accepts HTTP connections and redirects them to HTTPS.
+
+This is preferable to serving the administration interface directly over plaintext HTTP.
+
+### 12.3 Self-Signed Certificate
+
+The HTTPS service uses a self-signed certificate.
+
+This can cause browser certificate warnings unless the certificate is trusted by the administrative workstation.
+
+For production environments, administrators should consider using a properly managed certificate where appropriate.
+
+### 12.4 Filtering
+
+The majority of TCP ports on the gateway were filtered.
+
+This suggests that the gateway/firewall is limiting unsolicited TCP connections to services that are not intentionally exposed.
+
+### 12.5 Authentication
+
+The management interface presents a username/password login and contains support for a token-code field.
+
+The assessment did **not** attempt authentication, password guessing, credential testing, authentication bypass, or exploitation.
+
+---
+
+## 13. Limitations
+
+The assessment did not determine:
+
+* Exact FortiGate model.
+* Exact FortiOS version.
+* UDP service exposure.
+* Configuration of firewall policies.
+* Administrator accounts.
+* Password strength.
+* MFA configuration.
+* Vulnerability status of the installed FortiOS version.
+* Internal firewall rules.
+* Services accessible from networks other than `10.5.0.0/24`.
+
+Therefore, the assessment should be considered a **network/service reconnaissance assessment**, not a complete penetration test or configuration audit.
+
+---
+
+## 14. Recommended Next Steps
+
+If this is an authorized assessment of the FortiGate, recommended next steps are:
+
+1. **Identify the exact FortiOS version** from the administrative interface.
+2. Compare that version against Fortinet's current security advisories.
+3. Confirm that administrative access is restricted to trusted networks.
+4. Confirm that WAN-side administrative access is disabled unless explicitly required.
+5. Review administrator accounts and MFA configuration.
+6. Review the TLS certificate configuration.
+7. Review firewall policies for unnecessary management exposure.
+8. Consider restricting TCP/9512 to designated administrator IP addresses.
+9. Review logging and monitoring for administrative access.
+10. Keep FortiOS updated according to the organization's maintenance and security policy.
+
+---
+
+## 15. Overall Conclusion
+
+The reconnaissance successfully identified the local gateway at:
+
+```text
+10.5.0.1
+```
+
+A full TCP scan identified two open ports:
+
+```text
+808/tcp
+9512/tcp
+```
+
+TCP/808 was confirmed to be an HTTP service that redirects to:
+
+```text
+https://10.5.0.1:9512/
+```
+
+TCP/9512 was confirmed to be an HTTPS service hosting a login-protected administrative web interface.
+
+Analysis of the returned HTML identified the interface as **Fortinet FortiGate**.
+
+The gateway filters the overwhelming majority of TCP ports, limiting its exposed TCP service surface from the tested LAN host.
+
+**No exploitation, authentication bypass, credential attacks, or configuration changes were performed during this assessment.**
+

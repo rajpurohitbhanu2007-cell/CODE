@@ -1,0 +1,240 @@
+.<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Core 4 Phishing Detector</title>
+    
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self';">
+
+    <style>
+        /* ... (CSS is unchanged and is generally secure) ... */
+        body { font-family: Arial, sans-serif; margin: 0; background-color: #f4f4f9; color: #333; }
+        .navbar { background-color: #2c3e50; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .navbar button { float: left; display: block; color: white; text-align: center; padding: 14px 20px; text-decoration: none; font-size: 17px; border: none; background-color: inherit; cursor: pointer; transition: background-color 0.3s; }
+        .navbar button:hover { background-color: #34495e; }
+        .navbar button.active { background-color: #1abc9c; }
+        .content { padding: 20px; max-width: 800px; margin: 20px auto; background-color: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .page { display: none; }
+        h1, h2 { color: #1abc9c; }
+        input[type="text"] { width: calc(100% - 22px); padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; }
+        button.action-btn { background-color: #1abc9c; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button.action-btn:hover { background-color: #16a085; }
+        ul { list-style-type: none; padding: 0; }
+        ul li { background-color: #ecf0f1; margin: 5px 0; padding: 10px; border-radius: 4px; }
+        .fail { color: #e74c3c; font-weight: bold; }
+        .pass { color: #2ecc71; font-weight: bold; }
+        #result { padding: 15px; margin-top: 20px; border-radius: 5px; display: none; line-height: 1.6; }
+        .dangerous { border: 2px solid #e74c3c; background-color: #fbeae5; }
+        .suspicious { border: 2px solid #f39c12; background-color: #fcf3e6; }
+        .safe { border: 2px solid #2ecc71; background-color: #eafaf1; }
+    </style>
+</head>
+<body>
+
+    <div class="navbar">
+        <button id="btn-home">Home</button>
+        <button id="btn-detector">Detector</button>
+        <button id="btn-about">About</button>
+        <button id="btn-team">Team</button>
+    </div>
+
+    <div class="content">
+
+        <div id="home" class="page">
+            <h1>Welcome to the Phishing URL Detector</h1>
+            <p>Phishing is a major security threat where attackers try to steal your personal information through malicious websites. This tool helps you analyze URLs to identify potential threats before you click.</p>
+            <p>Stay safe online by checking suspicious links here!</p>
+            <button class="action-btn" id="go-to-detector-btn">Go to Detector</button>
+            <div style="margin-top: 20px;">
+                <h2>Learn More About Phishing:</h2>
+                <ul>
+                    <li><a href="https://www.youtube.com/watch?v=GLhDGuTSR9I" target="_blank">YouTube Video: What is Phishing?</a></li>
+                    <li><a href="https://phishingquiz.withgoogle.com" target="_blank">Google Phishing Quiz</a></li>
+                    <li><a href="https://learn.microsoft.com/en-us/defender-office-365/attack-simulation-training-training-modules" target="_blank">Microsoft Training Module: Attack Simulation Training</a></li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="detector" class="page">
+            <h1>URL Safety Checker</h1>
+            <p>Enter a full URL below to check its safety score.</p>
+            <input type="text" id="url-input" placeholder="e.g., https://www.google.com">
+            <button class="action-btn" onclick="checkUrl()">Check URL</button>
+            <div id="result"></div>
+        </div>
+
+        <div id="about" class="page">
+            <h1>About This Detector</h1>
+            <p>This tool is designed to protect users from phishing attacks by performing a real-time analysis of URLs. It uses a scoring system based on several common indicators of malicious websites.</p>
+            <h2>How It Works</h2>
+            <p>The detector checks for:</p>
+            <ul>
+                <li>Lack of HTTPS</li>
+                <li>Suspiciously long URLs</li>
+                <li>Presence in a known blacklist</li>
+                <li>Uncommon or misleading Top-Level Domains (TLDs)</li>
+                <li>Use of an IP address instead of a domain name</li>
+                <li>And several other risk factors...</li>
+            </ul>
+        </div>
+
+        <div id="team" class="page">
+            <h1>About the Team</h1>
+            <h2>Team Name: <strong>Core 4</strong></h2>
+            <p>This project was developed for a hackathon by a passionate team from the <strong>Global Institute of Technology, Jaipur</strong>.</p>
+            <h3>Team Members:</h3>
+            <ul>
+                <li>Bhanu Pratap</li>
+                <li>Devesh Sharma</li>
+                <li>Garvit Sharma</li>
+                <li>Rohit Kumawat</li>
+            </ul>
+        </div>
+
+    </div>
+
+    <script>
+        // --- UI Navigation Logic (IMPROVEMENT: Removed inline onclicks, used event listeners) ---
+        const navButtons = document.querySelectorAll('.navbar button');
+        const pages = document.querySelectorAll('.page');
+
+        function showPage(pageId, clickedButton) {
+            pages.forEach(page => page.style.display = 'none');
+            navButtons.forEach(btn => btn.classList.remove('active'));
+            const targetPage = document.getElementById(pageId);
+            if (targetPage) {
+                targetPage.style.display = 'block';
+            }
+            if (clickedButton) {
+                clickedButton.classList.add('active');
+            }
+        }
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initial load
+            showPage('home', document.getElementById('btn-home'));
+
+            // Event listeners for navbar buttons
+            navButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const pageId = this.id.replace('btn-', '');
+                    showPage(pageId, this);
+                });
+            });
+
+            // Event listener for "Go to Detector" button
+            document.getElementById('go-to-detector-btn').addEventListener('click', function() {
+                showPage('detector', document.getElementById('btn-detector'));
+            });
+        });
+
+        // --- Phishing Detector Logic---
+        const config = {
+            scores: { noHttps: 2, longUrl: 1, blacklist: 5, suspiciousTld: 3, suspiciousKeyword: 2, atSymbol: 4, ipAddress: 4, },
+            thresholds: { dangerous: 7, suspicious: 3, },
+            urlLengthLimit: 50,
+            blacklist: ["evil-site.com", "another-bad-url.org", "phishing-scam.net"],
+            suspiciousTlds: ['.zip', '.mov', '.review', '.xyz', '.tk'],
+            keywords: ['login', 'verify', 'account', 'update', 'secure', 'signin'],
+        };
+
+        function checkUrl() {
+            const urlInput = document.getElementById('url-input').value.trim();
+            const resultBox = document.getElementById('result');
+            
+            // SECURITY IMPROVEMENT 2: Validate and Parse URL using the native URL object
+            if (!urlInput) { alert("Please enter a URL!"); return; }
+
+            let parsedUrl;
+            try {
+                // Prepend protocol if missing for proper parsing, but preserve original input for checks
+                const fullUrl = urlInput.match(/^https?:\/\//i) ? urlInput : `https://${urlInput}`;
+                parsedUrl = new URL(fullUrl); 
+            } catch (e) {
+                alert("Invalid URL format. Please ensure it is correct and complete.");
+                resultBox.style.display = 'none';
+                return;
+            }
+
+            let riskScore = 0;
+            let analysisText = '<h4>Analysis Details:</h4><ul>';
+
+            // SECURITY IMPROVEMENT 3: Pass parsed URL components to checks for robustness
+            const checks = [
+                checkHttps(urlInput),
+                checkUrlLength(parsedUrl.href),
+                checkBlacklist(parsedUrl.hostname), 
+                checkSuspiciousTld(parsedUrl.hostname),
+                checkKeywords(parsedUrl.href),
+                checkAtSymbol(parsedUrl.href),
+                checkIpAddress(parsedUrl.hostname) 
+            ];
+
+            checks.forEach(check => {
+                if (check.isSuspicious) { riskScore += check.score; }
+                analysisText += check.message;
+            });
+
+            displayResult(riskScore, analysisText, resultBox);
+        }
+
+        function createAnalysisEntry(isSuspicious, message, score) {
+            const status = isSuspicious ? 'FAIL' : 'PASS';
+            const cssClass = isSuspicious ? 'fail' : 'pass';
+            const scoreText = isSuspicious ? ` (+${score})` : '';
+            return { isSuspicious, score, message: `<li><span class="${cssClass}">${status}:</span> ${message}${scoreText}</li>` };
+        }
+
+        // Checks if the original user input starts with https://
+    function checkHttps(url) { 
+        const isSecure = url.toLowerCase().startsWith('https://');
+        // The check fails if it's NOT secure, so we pass !isSecure
+        return createAnalysisEntry(!isSecure, "Input URL uses secure HTTPS.", config.scores.noHttps); 
+        }
+
+        function checkUrlLength(url) { 
+            return createAnalysisEntry(url.length > config.urlLengthLimit, `URL length is reasonable (<= ${config.urlLengthLimit} chars).`, config.scores.longUrl); 
+        }
+
+        // SECURITY IMPROVEMENT: Checks only the hostname, not the full URL string
+        function checkBlacklist(hostname) { 
+            return createAnalysisEntry(config.blacklist.some(site => hostname.toLowerCase().includes(site)), "URL not found in blacklist.", config.scores.blacklist); 
+        }
+
+        // SECURITY IMPROVEMENT: Extracts TLD from hostname reliably
+        function checkSuspiciousTld(hostname) { 
+            const parts = hostname.split('.');
+            const tld = '.' + parts[parts.length - 1].toLowerCase();
+            return createAnalysisEntry(config.suspiciousTlds.includes(tld), "URL uses a common TLD.", config.scores.suspiciousTld); 
+        }
+
+        function checkKeywords(url) { 
+            return createAnalysisEntry(config.keywords.some(k => url.toLowerCase().includes(k)), "URL does not contain suspicious keywords.", config.scores.suspiciousKeyword); 
+        }
+
+        function checkAtSymbol(url) { 
+            // The URL object handles most @ symbol trickery, but checking the full URL is still useful for unparsed inputs.
+            return createAnalysisEntry(url.includes('@'), 'URL does not contain an "@" symbol.', config.scores.atSymbol); 
+        }
+        
+        // SECURITY IMPROVEMENT: Checks only the hostname for IP pattern
+        function checkIpAddress(hostname) { 
+            const ipRegex = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/; 
+            return createAnalysisEntry(ipRegex.test(hostname), "URL uses a domain name.", config.scores.ipAddress); 
+        }
+
+        function displayResult(score, analysis, resultBox) {
+            analysis += '</ul>';
+            let finalMessage = '', finalClass = '';
+            if (score >= config.thresholds.dangerous) { finalMessage = '<strong>Result: DANGEROUS - HIGH RISK!</strong>'; finalClass = 'dangerous'; }
+            else if (score >= config.thresholds.suspicious) { finalMessage = '<strong>Result: SUSPICIOUS - MODERATE RISK.</strong>'; finalClass = 'suspicious'; }
+            else { finalMessage = '<strong>Result: SAFE - LOW RISK.</strong>'; finalClass = 'safe'; }
+            resultBox.className = finalClass;
+            resultBox.innerHTML = `${finalMessage}<p>Total Risk Score: ${score}</p>${analysis}`;
+            resultBox.style.display = 'block';
+        }
+    </script>
+
+</body>
+</html>
