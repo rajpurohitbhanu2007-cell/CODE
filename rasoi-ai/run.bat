@@ -1,6 +1,8 @@
 @echo off
 chcp 65001 > nul
-set "PATH=C:\Users\krono\.local\bin;%PATH%"
+if exist "%USERPROFILE%\.local\bin" (
+    set "PATH=%USERPROFILE%\.local\bin;%PATH%"
+)
 set "PYTHONIOENCODING=utf-8"
 echo Starting RasoiAI Backend on http://0.0.0.0:8000 ...
 echo Interactive Testbed: http://localhost:8000/test

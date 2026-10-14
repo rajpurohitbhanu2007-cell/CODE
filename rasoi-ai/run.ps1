@@ -1,5 +1,7 @@
 # Startup script for RasoiAI Backend
-$env:Path = "C:\Users\krono\.local\bin;" + $env:Path
+if (Test-Path "$env:USERPROFILE\.local\bin") {
+    $env:Path = "$env:USERPROFILE\.local\bin;" + $env:Path
+}
 $env:PYTHONIOENCODING = "utf-8"
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host "  Starting RasoiAI Backend on http://0.0.0.0:8000 ...     " -ForegroundColor Green
