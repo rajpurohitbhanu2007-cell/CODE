@@ -4,7 +4,7 @@ import requests
 # Network Configuration
 PORTAL_URL = "http://10.17.0.1:1000"
 LOGIN_ENDPOINT = f"{PORTAL_URL}/login.xml"
-USERNAME = "h8949637183"
+USERNAME = "h"
 PASSWORD = "344677876"
 CHECK_INTERVAL = 180  # Interval in seconds (3 minutes)
 
