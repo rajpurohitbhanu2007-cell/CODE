@@ -1,0 +1,55 @@
+{
+    "profiles": [
+        {
+            "name": "Primary",
+            "username": "",
+            "password": ""
+        },
+        {
+            "name": "StormDucky0",
+            "username": "h8949637183",
+            "password": "dpapi:AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvVH7PxSet0ivGi72UzbgMAAAAAAQAAAAZwBpAHQAdwBpAGYAaQAAABBmAAAAAQAAIAAAAIqpE2wAMY4iOWZ2xIOLXc3kUnnlGJZFzqvw9xv6V0kkAAAAAA6AAAAAAgAAIAAAAMEbaUJwUJoEoQsHf3rJh7+223vweMqdkTbYyYx28ljEEAAAAE6Ih48KH9E/q3J/l9WEK8xAAAAA3YrA/3kWzEDyBSAGhl+6ip1M0rx6Ymx/pHQW4uRF3Zty823NaGbPIPWfZBLFvsoKdPgBmjEmYMwAuiSvr82pNQ=="
+        },
+        {
+            "name": "StormDucky1",
+            "username": "h8279259338",
+            "password": "dpapi:AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvVH7PxSet0ivGi72UzbgMAAAAAAQAAAAZwBpAHQAdwBpAGYAaQAAABBmAAAAAQAAIAAAAMibcKOKRNJ5VNZNRj7wLEAz1BoUniocCn3iApD4zyK2AAAAAA6AAAAAAgAAIAAAAJYRG//tbHjmyUU2FrPbT33sRcFUVQLZvW/aX+z4k9BeEAAAABArcbxvj/OMzv8PNZ/0CF5AAAAA0kB7QzX7DohgZT9xFmdwaSS8hsI3VW4P2Rz3eqTpiAoy2d7Yewu+rV1or3q7sZ1vUmewvnctBoD83RGyeth1MQ=="
+        },
+        {
+            "name": "StormDucky2",
+            "username": "h8386813945",
+            "password": "dpapi:AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvVH7PxSet0ivGi72UzbgMAAAAAAQAAAAZwBpAHQAdwBpAGYAaQAAABBmAAAAAQAAIAAAAFSaSaWda6PlBjd9xKPW5k6GA95jsLJer/kcciSsFuPqAAAAAA6AAAAAAgAAIAAAACaFXOYQRKsVoZvQsiVkdWLKim+Cf811+WwYLR5KuHVuEAAAAPr6tF/sHY4hQhsk1xhTb/xAAAAAZk36ahPiQ81Ri7a+zFe4sflht1TvWkXQkDJ7v+8U/a+R733tzCwwdsNzGSDdJ4Zd4rSFYnNFtUgJVsJzUDYnbw=="
+        },
+        {
+            "name": "StormDucky3",
+            "username": "h8118871480",
+            "password": "dpapi:AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvVH7PxSet0ivGi72UzbgMAAAAAAQAAAAZwBpAHQAdwBpAGYAaQAAABBmAAAAAQAAIAAAAEKZjjGBsUFpjFqpWxMN1rlXIlFMi99gS6PB2QiJKNa3AAAAAA6AAAAAAgAAIAAAAE3Ds5N19RtTyOtpDise2q+Vuzyzp0LTplurAPYW7KeoEAAAAMUwWIQ9bOoecmZyKUnXDaVAAAAAUCkseW55a8nOJOfJuM8kHBSnH2B+jpj+Osi5GuzikuKi1VsdgCoTcizzG8muDxDjtTgzrs6E8IVu2zyYt99V6w=="
+        }
+    ],
+    "active_profile_index": 1,
+    "user_agent_mode": "iPhone 15 (iOS Spoof)",
+    "custom_user_agent": "",
+    "sound_alerts": true,
+    "desktop_notifications": true,
+    "keepalive_interval": 120,
+    "auto_reconnect": true,
+    "proxy_enabled": false,
+    "proxy_port": 8888,
+    "last_gateway": "172.7.0.1",
+    "trusted_portal_hosts": [
+        "172.15.1.2"
+    ],
+    "portal_host": "172.15.1.2",
+    "portal_port": 8000,
+    "portal_scheme": "http",
+    "last_magic": "",
+    "adaptive_keepalive": true,
+    "auto_profile_switching": true,
+    "auto_start_enabled": true,
+    "idle_logout_enabled": false,
+    "idle_logout_minutes": 30,
+    "doh_fallback_enabled": true,
+    "doh_endpoint": "https://1.1.1.1/dns-query",
+    "proxy_sniff_headers": false,
+    "live_monitor_enabled": true
+}
