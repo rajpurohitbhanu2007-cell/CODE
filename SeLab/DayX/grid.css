@@ -1,0 +1,16 @@
+*{
+    margin: 0;
+    padding: 0;
+}
+.container{
+    display: grid;
+    gap: 10px;
+    /* grid-template-columns: 1fr 2fr 1fr 1fr 1fr 3fr; */
+    /* grid-template-columns: repeat(5 ,1fr); */
+    grid-template-columns: repeat(auto-fit, minmax(200px ,1fr));
+}
+.box{
+    background-color: red;
+    padding: 10px;
+    height: 100px;
+}

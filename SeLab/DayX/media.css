@@ -1,0 +1,35 @@
+*{
+    margin: 0;
+    padding: 0;
+}
+.container{
+    display: flex;
+    gap: 10px;
+}
+.card{
+    background-color: red;
+    padding: 30px;
+    flex:1;
+    font-size: 24px;
+}
+@media (max-width:768px) {
+   .card{
+    font-size: 16px;
+    background-color: aqua;
+   }  
+}
+@media (max-width:600px) {
+    .card{
+        background-color: red;
+    }
+    .card:hover{
+        background-color: black;
+        color: pink;
+        font-size: 20px;
+    }
+}
+@media (min-width:768px){
+    .card{
+        background-color: blue;
+    }
+}

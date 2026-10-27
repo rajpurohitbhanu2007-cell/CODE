@@ -53,9 +53,13 @@ echo taskkill /F /IM GITwifi.exe ^>nul 2^>^&1 >> "%INSTALL_DIR%\uninstall.bat"
 echo echo [*] Removing Desktop and Start Menu shortcuts... >> "%INSTALL_DIR%\uninstall.bat"
 echo del /f /q "%USERPROFILE%\Desktop\GITwifi.lnk" ^>nul 2^>^&1 >> "%INSTALL_DIR%\uninstall.bat"
 echo rmdir /s /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\GITwifi" ^>nul 2^>^&1 >> "%INSTALL_DIR%\uninstall.bat"
+echo echo [*] Removing Windows Startup shortcuts... >> "%INSTALL_DIR%\uninstall.bat"
+echo del /f /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\GITwifi.lnk" ^>nul 2^>^&1 >> "%INSTALL_DIR%\uninstall.bat"
+echo del /f /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Launch_GITwifi.bat.lnk" ^>nul 2^>^&1 >> "%INSTALL_DIR%\uninstall.bat"
 echo echo [*] Removing Registry entries... >> "%INSTALL_DIR%\uninstall.bat"
 echo reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\GITwifi" /f ^>nul 2^>^&1 >> "%INSTALL_DIR%\uninstall.bat"
 echo reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "GITwifi" /f ^>nul 2^>^&1 >> "%INSTALL_DIR%\uninstall.bat"
+echo powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder' -Name 'GITwifi.lnk' -ErrorAction SilentlyContinue; Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -Name 'GITwifi' -ErrorAction SilentlyContinue;" ^>nul 2^>^&1 >> "%INSTALL_DIR%\uninstall.bat"
 echo echo [*] Removing application files... >> "%INSTALL_DIR%\uninstall.bat"
 echo start "" /b cmd.exe /c "timeout /t 1 ^>nul ^& rmdir /s /q """%INSTALL_DIR%"""" >> "%INSTALL_DIR%\uninstall.bat"
 echo echo [OK] GITwifi has been uninstalled successfully. >> "%INSTALL_DIR%\uninstall.bat"
@@ -87,10 +91,29 @@ set /p AUTOSTART="Do you want GITwifi to automatically start on Windows boot? (Y
 if /i "%AUTOSTART%"=="" set "AUTOSTART=Y"
 if /i "%AUTOSTART%"=="Y" (
     powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-      "$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; " ^
-      "Set-ItemProperty -Path $runKey -Name 'GITwifi' -Value '`\"%INSTALL_DIR%\GITwifi.exe`\" --minimized' -Force;"
-    echo [OK] Automatic startup enabled (starts silently in tray on boot).
+      "$startup = [Environment]::GetFolderPath('Startup'); " ^
+      "$ws = New-Object -ComObject WScript.Shell; " ^
+      "$s3 = $ws.CreateShortcut((Join-Path $startup 'GITwifi.lnk')); " ^
+      "$s3.TargetPath = '%INSTALL_DIR%\GITwifi.exe'; " ^
+      "$s3.Arguments = '--minimized'; " ^
+      "$s3.WorkingDirectory = '%INSTALL_DIR%'; " ^
+      "$s3.IconLocation = '%INSTALL_DIR%\app_icon.ico,0'; " ^
+      "$s3.WindowStyle = 7; " ^
+      "$s3.Description = 'GITwifi Suite - Campus Wi-Fi Authentication'; " ^
+      "$s3.Save(); " ^
+      "Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder' -Name 'GITwifi.lnk' -ErrorAction SilentlyContinue; " ^
+      "Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder' -Name 'Launch_GITwifi.bat.lnk' -ErrorAction SilentlyContinue; " ^
+      "Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'GITwifi' -ErrorAction SilentlyContinue; " ^
+      "Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -Name 'GITwifi' -ErrorAction SilentlyContinue; " ^
+      "$staleBat = Join-Path $startup 'Launch_GITwifi.bat.lnk'; if (Test-Path $staleBat) { Remove-Item $staleBat -Force };"
+    echo [OK] Automatic startup enabled (added to Windows Startup folder, runs minimized on boot).
     echo.
+) else (
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$startup = [Environment]::GetFolderPath('Startup'); " ^
+      "$lnk = Join-Path $startup 'GITwifi.lnk'; if (Test-Path $lnk) { Remove-Item $lnk -Force }; " ^
+      "$staleBat = Join-Path $startup 'Launch_GITwifi.bat.lnk'; if (Test-Path $staleBat) { Remove-Item $staleBat -Force }; " ^
+      "Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'GITwifi' -ErrorAction SilentlyContinue;"
 )
 
 set /p LAUNCH="Do you want to launch GITwifi now? (Y/N) [Y]: "

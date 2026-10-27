@@ -54,9 +54,30 @@ echo.
 :: 4. Ask to add to Windows Startup
 set /p "AUTOSTART=Do you want GITwifi to automatically start on Windows boot? (Y/N): "
 if /i "%AUTOSTART%"=="Y" (
-    powershell -NoProfile -Command ^
-      "$root = (Resolve-Path '%~dp0..').Path; $target = Join-Path $root 'Launch_GITwifi.bat'; $startup = [Environment]::GetFolderPath('Startup'); $lnkPath = Join-Path $startup 'GITwifi.lnk'; $ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut($lnkPath); $s.TargetPath = $target; $s.WorkingDirectory = $root; $s.WindowStyle = 7; $ico = Join-Path $root 'app_icon.ico'; if (Test-Path $ico) { $s.IconLocation = $ico + ',0' }; $s.Save()"
-    echo [OK] Added to Windows Startup!
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$root = (Resolve-Path '%~dp0..').Path; " ^
+      "$installedExe = [System.IO.Path]::Combine($env:LOCALAPPDATA, 'GITwifi\GITwifi.exe'); " ^
+      "$distExe = Join-Path $root 'dist\GITwifi.exe'; " ^
+      "$launchBat = Join-Path $root 'Launch_GITwifi.bat'; " ^
+      "if (Test-Path $installedExe) { $target = $installedExe; $work = [System.IO.Path]::GetDirectoryName($installedExe); $args = '--minimized' } " ^
+      "elseif (Test-Path $distExe) { $target = $distExe; $work = (Join-Path $root 'dist'); $args = '--minimized' } " ^
+      "else { $target = $launchBat; $work = $root; $args = '' }; " ^
+      "$startup = [Environment]::GetFolderPath('Startup'); " ^
+      "$lnkPath = Join-Path $startup 'GITwifi.lnk'; " ^
+      "$ws = New-Object -ComObject WScript.Shell; " ^
+      "$s = $ws.CreateShortcut($lnkPath); " ^
+      "$s.TargetPath = $target; " ^
+      "$s.Arguments = $args; " ^
+      "$s.WorkingDirectory = $work; " ^
+      "$s.WindowStyle = 7; " ^
+      "$ico = Join-Path $root 'app_icon.ico'; if (Test-Path $ico) { $s.IconLocation = $ico + ',0' }; " ^
+      "$s.Save(); " ^
+      "Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder' -Name 'GITwifi.lnk' -ErrorAction SilentlyContinue; " ^
+      "Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder' -Name 'Launch_GITwifi.bat.lnk' -ErrorAction SilentlyContinue; " ^
+      "Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'GITwifi' -ErrorAction SilentlyContinue; " ^
+      "Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' -Name 'GITwifi' -ErrorAction SilentlyContinue; " ^
+      "$staleBat = Join-Path $startup 'Launch_GITwifi.bat.lnk'; if (Test-Path $staleBat) { Remove-Item $staleBat -Force };"
+    echo [OK] Added to Windows Startup (runs minimized on boot)!
     echo.
 )
 

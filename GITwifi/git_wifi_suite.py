@@ -19,6 +19,7 @@ import sys
 import os
 import copy
 import time
+import datetime
 import re
 import json
 import base64
@@ -197,39 +198,59 @@ def get_app_dir() -> str:
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
 
+def get_resource_path(relative_path: str) -> str:
+    """Return absolute path to resource, resolving properly in both dev and PyInstaller one-file bundle."""
+    if hasattr(sys, "_MEIPASS"):
+        bundle_path = os.path.join(sys._MEIPASS, relative_path)
+        if os.path.exists(bundle_path):
+            return bundle_path
+    app_dir_path = os.path.join(get_app_dir(), relative_path)
+    if os.path.exists(app_dir_path):
+        return app_dir_path
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+
 def _generate_app_icon(path: str) -> None:
-    """Draw a styled Wi-Fi badge icon and save it as a multi-size .ico file."""
-    sizes = [16, 32, 48, 64, 128, 256]
-    images = []
-    for sz in sizes:
-        img = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        cx, cy = sz // 2, sz // 2
+    """Draw a styled high-definition Wi-Fi badge icon and save it as a multi-size .ico file."""
+    sizes = [16, 24, 32, 48, 64, 128, 256]
+    master_sz = 1024
+    img = Image.new("RGBA", (master_sz, master_sz), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    cx, cy = master_sz // 2, master_sz // 2
+    r = master_sz // 2 - 28
 
-        # Background circle - deep navy / slate
-        r = sz // 2 - 1
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#1a1c23")
+    # Outer soft drop-shadow / glow
+    for i in range(20, 0, -2):
+        alpha = int(45 * (1 - i / 20))
+        draw.ellipse([cx - r - i, cy - r - i, cx + r + i, cy + r + i], outline=(11, 61, 145, alpha), width=3)
 
-        # Wi-Fi arcs - accent blue
-        arc_color = "#3d70f5"
-        dot_color = "#80a5ff"
-        margin = sz * 0.08
-        for factor in [0.82, 0.56, 0.30]:
-            ar = int((sz // 2 - margin) * factor)
-            if ar < 2:
-                continue
-            x0, y0 = cx - ar, cy - ar
-            x1, y1 = cx + ar, cy + ar
-            width = max(1, sz // 26)
-            draw.arc([x0, y0, x1, y1], start=210, end=330, fill=arc_color, width=width)
+    # Base background circle - Deep GIT Navy
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#082352")
 
-        # Center dot
-        dr = max(2, sz // 18)
-        draw.ellipse([cx - dr, cy + dr, cx + dr, cy + dr * 3], fill=dot_color)
-        images.append(img)
+    # Subtle inner gradient ring
+    r_ring = r - 16
+    draw.ellipse([cx - r_ring, cy - r_ring, cx + r_ring, cy + r_ring], outline=(56, 189, 248, 220), width=12)
 
-    # In Pillow, save from largest image (256x256) as master canvas so all smaller frames are embedded correctly.
-    images[-1].save(path, format="ICO", append_images=images[:-1], bitmap_format="bmp")
+    # High definition Wi-Fi arcs
+    arc_configs = [
+        (350, 52, "#60a5fa"),
+        (250, 46, "#38bdf8"),
+        (150, 40, "#2563eb")
+    ]
+    for rad, w, col in arc_configs:
+        x0, y0 = cx - rad, cy - rad + 85
+        x1, y1 = cx + rad, cy + rad + 85
+        draw.arc([x0, y0, x1, y1], start=215, end=325, fill=col, width=w)
+
+    # Center dot
+    dot_r = 58
+    dot_y = cy + 205
+    draw.ellipse([cx - dot_r - 10, dot_y - dot_r - 10, cx + dot_r + 10, dot_y + dot_r + 10], fill=(56, 189, 248, 140))
+    draw.ellipse([cx - dot_r, dot_y - dot_r, cx + dot_r, dot_y + dot_r], fill="#38bdf8")
+    draw.ellipse([cx - 26, dot_y - 26, cx + 26, dot_y + 26], fill="#ffffff")
+
+    images = [img.resize((s, s), Image.Resampling.LANCZOS) for s in sizes]
+    master = images[-1]
+    master.save(path, format="ICO", sizes=[(s, s) for s in sizes], append_images=images)
 
 # ==========================================
 # WINDOWS DPAPI CREDENTIAL ENCRYPTION
@@ -307,7 +328,11 @@ DEFAULT_CONFIG = {
     "portal_host": "",
     "portal_port": AppConstants.DEFAULT_PORTAL_PORT,
     "portal_scheme": "http",
-    "live_monitor_enabled": True
+    "live_monitor_enabled": True,
+    "daily_quota_limit_gb": 10.0,
+    "auto_rotate_on_quota": True,
+    "auto_rotate_on_disconnect": False,
+    "daily_usage_tracking": {}
 }
 
 SPOOF_USER_AGENTS = {
@@ -349,6 +374,14 @@ def load_settings() -> Dict[str, Any]:
                 loaded["active_profile_index"] = max(0, int(loaded.get("active_profile_index", 0)))
             except (ValueError, TypeError):
                 loaded["active_profile_index"] = 0
+
+            try:
+                loaded["daily_quota_limit_gb"] = max(0.1, float(loaded.get("daily_quota_limit_gb", 10.0)))
+            except (ValueError, TypeError):
+                loaded["daily_quota_limit_gb"] = 10.0
+
+            if not isinstance(loaded.get("daily_usage_tracking"), dict):
+                loaded["daily_usage_tracking"] = {}
 
             cfg = loaded
         except (json.JSONDecodeError, OSError, TypeError, UnicodeError) as e:
@@ -421,52 +454,140 @@ def save_settings(cfg: Dict[str, Any]) -> None:
         print(f"[Config] Error saving config: {e}")
 
 # ==========================================
-# WINDOWS REGISTRY AUTOSTART MANAGEMENT
+# WINDOWS STARTUP & AUTOSTART MANAGEMENT
 # ==========================================
+STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
+STARTUP_LNK = os.path.join(STARTUP_DIR, "GITwifi.lnk")
+STALE_STARTUP_LNK = os.path.join(STARTUP_DIR, "Launch_GITwifi.bat.lnk")
 RUN_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_REG_NAME = "GITwifi"
+APPROVED_STARTUP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
+APPROVED_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 
 def is_auto_start_registered() -> bool:
-    """Check if GITwifi is registered in HKCU Run registry key and points to an existing file."""
-    if not HAS_WINREG:
-        return False
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_KEY, 0, winreg.KEY_READ) as key:
-            val, _ = winreg.QueryValueEx(key, RUN_REG_NAME)
-            if not val:
-                return False
-            # Bug 46 fix: Verify the registered binary or script actually still exists on disk
-            raw_path = val.split('"')[1] if '"' in val else val.split()[0]
-            return os.path.exists(raw_path)
-    except (FileNotFoundError, OSError):
-        return False
+    """Check if GITwifi is registered to start automatically on Windows boot and not disabled in Task Manager."""
+    # 1. Check Windows Startup folder shortcut
+    if os.path.exists(STARTUP_LNK):
+        if HAS_WINREG:
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APPROVED_STARTUP_KEY, 0, winreg.KEY_READ) as key:
+                    val, _ = winreg.QueryValueEx(key, "GITwifi.lnk")
+                    if isinstance(val, (bytes, bytearray)) and len(val) > 0 and val[0] == 3:
+                        return False  # Explicitly disabled by user in Task Manager
+            except OSError:
+                pass
+        return True
+
+    # 2. Check legacy / alternative HKCU Run registry key
+    if HAS_WINREG:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_KEY, 0, winreg.KEY_READ) as key:
+                val, _ = winreg.QueryValueEx(key, RUN_REG_NAME)
+                if val:
+                    raw_path = val.split('"')[1] if '"' in val else val.split()[0]
+                    if os.path.exists(raw_path):
+                        try:
+                            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APPROVED_RUN_KEY, 0, winreg.KEY_READ) as akey:
+                                aval, _ = winreg.QueryValueEx(akey, RUN_REG_NAME)
+                                if isinstance(aval, (bytes, bytearray)) and len(aval) > 0 and aval[0] == 3:
+                                    return False
+                        except OSError:
+                            pass
+                        return True
+        except (FileNotFoundError, OSError):
+            pass
+    return False
 
 def set_auto_start_registered(enable: bool) -> bool:
-    """Register or remove GITwifi silent startup in HKCU Run registry key with --minimized flag."""
-    if not HAS_WINREG:
-        return False
+    """Register or remove GITwifi shortcut in the Windows Startup folder with --minimized flag."""
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_KEY, 0, winreg.KEY_SET_VALUE) as key:
-            if enable:
-                if getattr(sys, "frozen", False):
-                    cmd = f'"{sys.executable}" --minimized'
+        if enable:
+            # 1. Determine target binary / script
+            if getattr(sys, "frozen", False):
+                target_exe = sys.executable
+                args = "--minimized"
+                work_dir = os.path.dirname(sys.executable)
+            else:
+                installed_exe = os.path.join(os.environ.get("LOCALAPPDATA", ""), "GITwifi", "GITwifi.exe")
+                dist_exe = os.path.join(get_app_dir(), "dist", "GITwifi.exe")
+                if os.path.exists(installed_exe):
+                    target_exe = installed_exe
+                    args = "--minimized"
+                    work_dir = os.path.dirname(installed_exe)
+                elif os.path.exists(dist_exe):
+                    target_exe = dist_exe
+                    args = "--minimized"
+                    work_dir = os.path.dirname(dist_exe)
                 else:
-                    # Bug 46 fix: Case-insensitive python.exe replacement and dynamic __file__ path
                     py_exe = sys.executable
                     pyw_exe = re.sub(r'python\.exe$', 'pythonw.exe', py_exe, flags=re.IGNORECASE)
                     if not os.path.exists(pyw_exe):
                         pyw_exe = py_exe
-                    script_path = os.path.abspath(__file__)
-                    cmd = f'"{pyw_exe}" "{script_path}" --minimized'
-                winreg.SetValueEx(key, RUN_REG_NAME, 0, winreg.REG_SZ, cmd)
-            else:
+                    target_exe = pyw_exe
+                    args = f'"{os.path.abspath(__file__)}" --minimized'
+                    work_dir = get_app_dir()
+
+            icon_path = get_resource_path("app_icon.ico")
+            if not os.path.exists(icon_path):
+                icon_path = target_exe
+
+            os.makedirs(STARTUP_DIR, exist_ok=True)
+
+            ps_script = (
+                f"$ws = New-Object -ComObject WScript.Shell; "
+                f"$s = $ws.CreateShortcut('{STARTUP_LNK}'); "
+                f"$s.TargetPath = '{target_exe}'; "
+                f"$s.Arguments = '{args}'; "
+                f"$s.WorkingDirectory = '{work_dir}'; "
+                f"$s.WindowStyle = 7; "
+                f"$s.Description = 'GITwifi Suite - Campus Wi-Fi Authentication'; "
+                f"if (Test-Path '{icon_path}') {{ $s.IconLocation = '{icon_path},0' }}; "
+                f"$s.Save(); "
+                f"Remove-ItemProperty -Path 'HKCU:\\{APPROVED_STARTUP_KEY}' -Name 'GITwifi.lnk' -ErrorAction SilentlyContinue; "
+                f"Remove-ItemProperty -Path 'HKCU:\\{APPROVED_STARTUP_KEY}' -Name 'Launch_GITwifi.bat.lnk' -ErrorAction SilentlyContinue; "
+                f"Remove-ItemProperty -Path 'HKCU:\\{APPROVED_RUN_KEY}' -Name '{RUN_REG_NAME}' -ErrorAction SilentlyContinue; "
+                f"Remove-ItemProperty -Path 'HKCU:\\{RUN_REG_KEY}' -Name '{RUN_REG_NAME}' -ErrorAction SilentlyContinue;"
+            )
+            subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+                creationflags=CREATE_NO_WINDOW,
+                check=False
+            )
+            if os.path.exists(STALE_STARTUP_LNK):
                 try:
-                    winreg.DeleteValue(key, RUN_REG_NAME)
-                except FileNotFoundError:
+                    os.remove(STALE_STARTUP_LNK)
+                except OSError:
+                    pass
+        else:
+            if os.path.exists(STARTUP_LNK):
+                try:
+                    os.remove(STARTUP_LNK)
+                except OSError:
+                    pass
+            if os.path.exists(STALE_STARTUP_LNK):
+                try:
+                    os.remove(STALE_STARTUP_LNK)
+                except OSError:
+                    pass
+            if HAS_WINREG:
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_KEY, 0, winreg.KEY_SET_VALUE) as key:
+                        winreg.DeleteValue(key, RUN_REG_NAME)
+                except (FileNotFoundError, OSError):
+                    pass
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APPROVED_RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+                        winreg.DeleteValue(key, RUN_REG_NAME)
+                except (FileNotFoundError, OSError):
+                    pass
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APPROVED_STARTUP_KEY, 0, winreg.KEY_SET_VALUE) as key:
+                        winreg.DeleteValue(key, "GITwifi.lnk")
+                except (FileNotFoundError, OSError):
                     pass
         return True
-    except OSError as e:
-        print(f"[Registry] Autostart update error: {e}")
+    except Exception as e:
+        print(f"[Autostart] Configuration error: {e}")
         return False
 
 # ==========================================
@@ -1034,12 +1155,22 @@ class HotspotProxyServer:
 # AUTHENTICATION & FORTIGATE ENGINE
 # ==========================================
 class GitWifiCore:
-    def __init__(self, status_cb=None, log_cb=None, profile_switch_cb=None):
+    def __init__(self, status_cb=None, log_cb=None, profile_switch_cb=None, notify_cb=None):
         self.config = load_settings()
         self.status_cb = status_cb
         self.log_cb = log_cb
         self.profile_switch_cb = profile_switch_cb
+        self.notify_cb = notify_cb
         self.session = requests.Session()
+        def _unsecure_cookie_hook(resp, *args, **kwargs):
+            try:
+                for c in resp.cookies:
+                    c.secure = False
+                for c in self.session.cookies:
+                    c.secure = False
+            except Exception:
+                pass
+        self.session.hooks["response"].append(_unsecure_cookie_hook)
         self.status = "Disconnected"
         self.running = False
         self.worker_thread = None
@@ -1068,6 +1199,15 @@ class GitWifiCore:
         self.keepalive_consecutive_successes: int = 0
         self.keepalive_consecutive_failures: int = 0
 
+        # Quota Tracking & Multi-Account Rotation state
+        self.quota_lock = threading.Lock()
+        self.last_quota_check_io = get_system_network_io()
+        self.last_quota_check_time = time.time()
+        self.last_quota_save_time = time.time()
+        self.quota_warning_sent_80 = set()
+        self.quota_warning_sent_95 = set()
+        self.is_auto_rotating = False
+
         self.proxy_server = HotspotProxyServer(port=self.config.get("proxy_port", 8888), logger=self.log)
         self.proxy_server.sniff_headers = self.config.get("proxy_sniff_headers", False)
 
@@ -1077,6 +1217,20 @@ class GitWifiCore:
             self.config[key] = value
             if save:
                 save_settings(self.config)
+
+    def _unsecure_portal_cookies(self) -> None:
+        """
+        OPNsense captive portals issue PHPSESSID with secure=True even over plaintext HTTP.
+        RFC 6265 prevents requests.Session from transmitting secure cookies over http://.
+        Stripping secure=True ensures the PHP session cookie is sent on keepalive requests,
+        preventing server-side 30-40s session termination.
+        """
+        try:
+            with self.session_lock:
+                for c in self.session.cookies:
+                    c.secure = False
+        except Exception:
+            pass
 
     def get_verify_tls(self, url: Optional[str] = None) -> Union[bool, str]:
         """
@@ -1112,8 +1266,19 @@ class GitWifiCore:
                 winsound.MessageBeep(winsound.MB_OK)
             elif kind == "fail":
                 winsound.MessageBeep(winsound.MB_ICONHAND)
+            elif kind == "warning":
+                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
         except Exception:
             pass
+
+    def notify(self, title: str, message: str) -> None:
+        """Dispatch desktop notification via UI callback or log."""
+        self.log(f"[Notification] {title}: {message}")
+        if self.notify_cb and callable(self.notify_cb):
+            try:
+                self.notify_cb(title, message)
+            except Exception as e:
+                self.log(f"[Notification] Dispatch error: {e}")
 
     def get_user_agent(self):
         mode = self.config.get("user_agent_mode", "Windows Chrome")
@@ -1193,6 +1358,232 @@ class GitWifiCore:
                 return profiles[0]
             return None
 
+    def get_profile_daily_usage(self, username: str, date_str: Optional[str] = None) -> Tuple[int, int]:
+        """Return (in_bytes, out_bytes) recorded today (or on date_str) for the specified username."""
+        if not username:
+            return (0, 0)
+        d_str = date_str or datetime.date.today().isoformat()
+        with _config_lock:
+            tracking = self.config.get("daily_usage_tracking", {})
+            day_map = tracking.get(d_str, {})
+            user_data = day_map.get(username, {})
+            return (int(user_data.get("in", 0)), int(user_data.get("out", 0)))
+
+    def record_network_bytes(self, delta_in: int, delta_out: int) -> None:
+        """Accumulate transferred bytes into the current active profile's daily bandwidth record."""
+        if delta_in <= 0 and delta_out <= 0:
+            return
+        prof = self.get_active_profile()
+        if not prof or not prof.get("username"):
+            return
+        username = prof["username"].strip()
+        today_str = datetime.date.today().isoformat()
+
+        with self.quota_lock:
+            with _config_lock:
+                if "daily_usage_tracking" not in self.config or not isinstance(self.config["daily_usage_tracking"], dict):
+                    self.config["daily_usage_tracking"] = {}
+                tracking = self.config["daily_usage_tracking"]
+
+                # Prune records older than 14 days to keep config.json lightweight
+                try:
+                    cutoff = (datetime.date.today() - datetime.timedelta(days=14)).isoformat()
+                    for d_key in list(tracking.keys()):
+                        if str(d_key) < cutoff:
+                            del tracking[d_key]
+                except Exception:
+                    pass
+
+                if today_str not in tracking or not isinstance(tracking[today_str], dict):
+                    tracking[today_str] = {}
+                day_map = tracking[today_str]
+
+                if username not in day_map or not isinstance(day_map[username], dict):
+                    day_map[username] = {"in": 0, "out": 0}
+                day_map[username]["in"] = int(day_map[username].get("in", 0)) + delta_in
+                day_map[username]["out"] = int(day_map[username].get("out", 0)) + delta_out
+
+                # Throttle disk writes: persist to disk every 30 seconds or if delta >= 5 MB
+                now = time.time()
+                if (now - self.last_quota_save_time >= 30.0) or ((delta_in + delta_out) >= 5242880):
+                    self.last_quota_save_time = now
+                    try:
+                        save_settings(self.config)
+                    except Exception:
+                        pass
+
+    def get_active_profile_daily_total(self) -> int:
+        """Return total bytes (in + out) consumed today by the currently active profile."""
+        prof = self.get_active_profile()
+        if not prof or not prof.get("username"):
+            return 0
+        in_b, out_b = self.get_profile_daily_usage(prof["username"])
+        return in_b + out_b
+
+    def check_quota_and_rotate_if_needed(self) -> None:
+        """
+        Check physical network interface transfer deltas, record daily profile usage,
+        and evaluate against the 10 GB limit (or user-defined daily quota).
+        Triggers multi-account auto-rotation upon hitting the limit.
+        """
+        if self.status != "Connected":
+            self.last_quota_check_io = get_system_network_io()
+            return
+
+        cur_in, cur_out = get_system_network_io()
+        prev_in, prev_out = self.last_quota_check_io
+        self.last_quota_check_io = (cur_in, cur_out)
+
+        # Sanity check: delta must be non-negative and under 2 GB per tick (filter reboot/adapter reset jumps)
+        if cur_in >= prev_in and cur_out >= prev_out:
+            d_in = cur_in - prev_in
+            d_out = cur_out - prev_out
+            if (d_in + d_out) < 2147483648:
+                self.record_network_bytes(d_in, d_out)
+
+        prof = self.get_active_profile()
+        if not prof or not prof.get("username"):
+            return
+
+        u_name = prof.get("name", "Active Profile")
+        u_user = prof.get("username", "")
+        today_str = datetime.date.today().isoformat()
+        total_bytes = self.get_active_profile_daily_total()
+        limit_gb = float(self.config.get("daily_quota_limit_gb", 10.0))
+        limit_bytes = int(limit_gb * (1024**3))
+        pct = (total_bytes / limit_bytes * 100.0) if limit_bytes > 0 else 0.0
+
+        # Warning threshold: 80%
+        if pct >= 80.0 and (u_user, today_str) not in self.quota_warning_sent_80:
+            self.quota_warning_sent_80.add((u_user, today_str))
+            used_gb = total_bytes / (1024**3)
+            self.log(f"[Quota Alert] Profile '{u_name}' ({u_user}) has used {used_gb:.2f} GB (80% of daily {limit_gb:.1f} GB limit).")
+            self.alert("warning")
+            self.notify(
+                "Daily Quota Alert (80%)",
+                f"Profile '{u_name}' has used {used_gb:.2f} GB of {limit_gb:.1f} GB limit."
+            )
+
+        # Warning threshold: 95%
+        if pct >= 95.0 and (u_user, today_str) not in self.quota_warning_sent_95:
+            self.quota_warning_sent_95.add((u_user, today_str))
+            used_gb = total_bytes / (1024**3)
+            self.log(f"[Quota Critical] Profile '{u_name}' ({u_user}) has used {used_gb:.2f} GB (95% of daily {limit_gb:.1f} GB limit).")
+            self.alert("warning")
+            self.notify(
+                "Daily Quota Critical (95%)",
+                f"Profile '{u_name}' is nearing 10 GB limit ({used_gb:.2f}/{limit_gb:.1f} GB)!"
+            )
+
+        # Limit reached (100%): Auto-Rotate
+        if total_bytes >= limit_bytes:
+            if self.config.get("auto_rotate_on_quota", True):
+                if not self.is_auto_rotating:
+                    used_gb = total_bytes / (1024**3)
+                    self.log(f"[Auto-Rotate] 10 GB Daily limit reached on '{u_name}' ({used_gb:.2f} GB used). Rotating to next profile...")
+                    self.rotate_to_next_profile(reason="daily_quota_exhausted")
+
+    def rotate_to_next_profile(self, reason: str = "manual") -> bool:
+        """
+        Multi-Account Auto-Rotation:
+        Selects the next configured profile with remaining daily quota,
+        logs out of the current captive portal session to release the IP/firewall binding,
+        updates the active profile, and initiates immediate re-authentication.
+        """
+        with self.state_lock:
+            if self.is_auto_rotating:
+                return False
+            self.is_auto_rotating = True
+
+        try:
+            with _config_lock:
+                profiles = self.config.get("profiles", [])
+                if not profiles or len(profiles) <= 1:
+                    self.log(f"[Auto-Rotate] Cannot rotate: Only {len(profiles)} profile configured. Add another profile in the Profiles tab.")
+                    return False
+
+                curr_idx = self.config.get("active_profile_index", 0)
+                curr_prof = profiles[curr_idx] if 0 <= curr_idx < len(profiles) else {}
+                curr_name = curr_prof.get("name", f"Profile #{curr_idx + 1}")
+                limit_gb = float(self.config.get("daily_quota_limit_gb", 10.0))
+                limit_bytes = int(limit_gb * (1024**3))
+                today_str = datetime.date.today().isoformat()
+
+                candidates = []
+                for offset in range(1, len(profiles)):
+                    cand_idx = (curr_idx + offset) % len(profiles)
+                    cand_prof = profiles[cand_idx]
+                    cand_user = cand_prof.get("username", "").strip()
+                    if not cand_user:
+                        continue
+                    in_b, out_b = self.get_profile_daily_usage(cand_user, today_str)
+                    tot_b = in_b + out_b
+                    is_under = (tot_b < limit_bytes)
+                    candidates.append((cand_idx, cand_prof, tot_b, is_under))
+
+                if not candidates:
+                    self.log("[Auto-Rotate] No valid candidate profiles found with usernames.")
+                    return False
+
+                # Prefer candidate that has not exceeded quota
+                chosen = next((c for c in candidates if c[3]), None)
+                if not chosen:
+                    # All profiles have hit quota; pick the one with lowest daily usage
+                    chosen = min(candidates, key=lambda c: c[2])
+                    self.log(f"[Auto-Rotate] Notice: All profiles reached quota. Rotating to lowest usage: '{chosen[1].get('name')}' ({chosen[2]/(1024**3):.2f} GB).")
+
+                next_idx = chosen[0]
+                next_prof = chosen[1]
+                next_name = next_prof.get("name", f"Profile #{next_idx + 1}")
+
+                self.config["active_profile_index"] = next_idx
+                self.failed_login_attempts = 0
+                save_settings(self.config)
+
+            self.log(f"[Auto-Rotate] Rotated profile from '{curr_name}' to '{next_name}' (#{next_idx + 1}) [Reason: {reason.replace('_', ' ')}].")
+
+            if hasattr(self, "profile_switch_cb") and callable(self.profile_switch_cb):
+                try:
+                    self.profile_switch_cb(next_idx)
+                except Exception as e:
+                    self.log(f"[Auto-Rotate] UI callback error: {e}")
+
+            self.notify(
+                "Multi-Account Auto-Rotation",
+                f"Switched to '{next_name}' ({next_prof.get('username')}). Re-authenticating..."
+            )
+
+            def _rotate_worker():
+                try:
+                    self.log("[Auto-Rotate] Logging out of current portal session for clean handoff...")
+                    self.logout(disconnect_wifi=False, pause_auto_reconnect=False)
+                    with self.state_lock:
+                        self.user_signed_out = False
+                        self.keepalive_url = None
+                        self.current_magic = None
+                        self.failed_login_attempts = 0
+                        self.error_backoff_seconds = 30.0
+                    with self.session_lock:
+                        try:
+                            self.session.cookies.clear()
+                        except Exception:
+                            pass
+                    time.sleep(2.5)
+                    self.set_status("Shotgun Probing...")
+                    self.log(f"[Auto-Rotate] Re-probing captive portal with profile '{next_name}'...")
+                    self.interrupt_cycle()
+                finally:
+                    with self.state_lock:
+                        self.is_auto_rotating = False
+
+            threading.Thread(target=_rotate_worker, daemon=True).start()
+            return True
+        except Exception as e:
+            self.log(f"[Auto-Rotate] Error during profile rotation: {e}")
+            with self.state_lock:
+                self.is_auto_rotating = False
+            return False
+
     def start(self):
         if not self.running:
             self.running = True
@@ -1248,6 +1639,14 @@ class GitWifiCore:
                 elif self.status == "Login Rejected":
                     self.failed_login_attempts += 1
                     self.log(f"Consecutive failed login attempts: {self.failed_login_attempts}/{self.max_login_retries}")
+                    # Auto-rotate to another profile if credentials rejected repeatedly
+                    if (self.config.get("auto_rotate_on_quota", True) or self.config.get("auto_rotate_on_disconnect", False)) and self.failed_login_attempts >= 2:
+                        profiles = self.config.get("profiles", [])
+                        if len(profiles) > 1 and not self.is_auto_rotating:
+                            self.log("[Auto-Rotate] Consecutive login rejections on active profile. Auto-rotating to next account...")
+                            self.rotate_to_next_profile(reason="login_rejected")
+                            self.cycle_event.wait(5.0)
+                            continue
                     # Check auto_reconnect before sleeping to avoid unnecessary 120s delay
                     if not self.config.get("auto_reconnect", True):
                         self.log("Auto-reconnect is disabled. Waiting for manual Re-Probe.")
@@ -1292,6 +1691,7 @@ class GitWifiCore:
                         with self.state_lock:
                             if not self.keepalive_url or self.user_signed_out:
                                 break
+                        self.check_quota_and_rotate_if_needed()
                         if self.cycle_event.wait(min(5.0, wait_sec)):
                             self.cycle_event.clear()
                             break
@@ -1307,6 +1707,7 @@ class GitWifiCore:
                     while self.running and wait_sec > 0:
                         if self.user_signed_out:
                             break
+                        self.check_quota_and_rotate_if_needed()
                         if self.cycle_event.wait(min(5.0, wait_sec)):
                             self.cycle_event.clear()
                             break
@@ -1331,9 +1732,12 @@ class GitWifiCore:
             if active_gw and active_gw != "-":
                 if self.gateway_ip != "-" and self.gateway_ip != active_gw:
                     self.log(f"[Network] Gateway transitioned from {self.gateway_ip} to {active_gw}. Resetting portal parameters.")
-                    self.portal_host = active_gw
-                    self.portal_port = AppConstants.DEFAULT_PORTAL_PORT
-                    self.portal_scheme = "http"
+                    trusted_hosts = self.config.get("trusted_portal_hosts", [])
+                    # Do not overwrite dedicated campus portal (e.g. 172.15.1.2:8000) when roaming APs
+                    if self.portal_host not in trusted_hosts and self.portal_host not in ("172.15.1.2", "172.15.1.1"):
+                        self.portal_host = active_gw
+                        self.portal_port = AppConstants.DEFAULT_PORTAL_PORT
+                        self.portal_scheme = "http"
                     with self.state_lock:
                         self.keepalive_url = None
                         self.current_magic = None
@@ -1378,11 +1782,13 @@ class GitWifiCore:
                 if self.gateway_ip and self.gateway_ip != "-":
                     fallback_candidates.append(f"http://{self.gateway_ip}:80/")
 
-                # Previously saved portal host if different
-                if self.portal_host and self.portal_host not in ("-", "172.15.1.2", self.gateway_ip):
+                # Saved portal target if custom port or non-gateway
+                if self.portal_host and self.portal_host not in ("-", "172.15.1.2"):
                     p_scheme = self.portal_scheme or "http"
                     p_port = self.portal_port or 80
-                    fallback_candidates.append(f"{p_scheme}://{self.portal_host}:{p_port}/")
+                    cand = f"{p_scheme}://{self.portal_host}:{p_port}/"
+                    if cand not in fallback_candidates:
+                        fallback_candidates.append(cand)
 
                 fallback_resp = None
                 for target in fallback_candidates:
@@ -1559,6 +1965,7 @@ class GitWifiCore:
                 headers = {"X-Requested-With": "XMLHttpRequest"}
                 auth_resp = self.session.post(api_logon_url, data=auth_payload, headers=headers,
                                                timeout=AppConstants.AUTH_POST_TIMEOUT, verify=False)
+                self._unsecure_portal_cookies()
                 
                 # Check sign-out race condition
                 with self.state_lock:
@@ -1695,6 +2102,7 @@ class GitWifiCore:
                     st_resp = self.session.post(status_url, data={"user": "", "password": ""},
                                                 headers={"X-Requested-With": "XMLHttpRequest"},
                                                 timeout=6.0, verify=False)
+                    self._unsecure_portal_cookies()
                     if st_resp.status_code == 200 and st_resp.json().get("clientState") == "AUTHORIZED":
                         self.log("OPNsense status API confirmed: clientState is AUTHORIZED (firewall rules active).")
                         auth_ok = True
@@ -1781,11 +2189,13 @@ class GitWifiCore:
             self.log("Dispatching keepalive ping...")
             verify_opt = self.get_verify_tls(url)
             with self.session_lock:
+                self._unsecure_portal_cookies()
                 if "/api/captiveportal/" in url:
                     # OPNsense status check ping
                     headers = {"X-Requested-With": "XMLHttpRequest"}
                     r = self.session.post(url, data={"user": "", "password": ""}, headers=headers,
                                           timeout=AppConstants.KEEPALIVE_HTTP_TIMEOUT, verify=verify_opt)
+                    self._unsecure_portal_cookies()
                 else:
                     # For FortiGate: ping keepalive endpoint without following redirects (an expired session 302-redirects to login)
                     r = self.session.get(url, timeout=AppConstants.KEEPALIVE_HTTP_TIMEOUT, allow_redirects=False, verify=verify_opt)
@@ -1801,6 +2211,12 @@ class GitWifiCore:
                     self.keepalive_consecutive_successes += 1
                     self.keepalive_consecutive_failures = 0
                     self.log(f"OPNsense session verified active ({rtt_ms}ms).")
+                    # Real WAN keepalive: OPNsense idle accounting only measures packets traversing the WAN gateway.
+                    # Send a lightweight HTTP GET to reset the firewall's idle timer and prevent idle dropouts.
+                    try:
+                        self.session.get(AppConstants.PROBE_URL, timeout=3.0, verify=False)
+                    except Exception:
+                        pass
                     return
                 else:
                     self.keepalive_consecutive_failures += 1
@@ -1813,6 +2229,13 @@ class GitWifiCore:
                         with _config_lock:
                             self.config["last_magic"] = ""
                             save_settings(self.config)
+                        # Check if session was terminated due to quota reached or disconnect rotation
+                        limit_bytes = int(float(self.config.get("daily_quota_limit_gb", 10.0)) * (1024**3))
+                        if self.config.get("auto_rotate_on_disconnect", False) or (self.config.get("auto_rotate_on_quota", True) and self.get_active_profile_daily_total() >= int(0.85 * limit_bytes)):
+                            profiles = self.config.get("profiles", [])
+                            if len(profiles) > 1 and not self.is_auto_rotating:
+                                self.log("[Auto-Rotate] Session dropped while near daily limit. Auto-rotating to next profile...")
+                                self.rotate_to_next_profile(reason="session_dropped_near_quota")
                     return
             if r.status_code == 200 and ("keepalive" in r.text.lower() or "ok" in r.text.lower() or len(r.text) < 500):
                 self.keepalive_consecutive_successes += 1
@@ -1884,9 +2307,10 @@ class GitWifiCore:
         except Exception as e:
             self.log(f"[DoH] DNS-over-HTTPS verification failed: {e}")
 
-    def logout(self, disconnect_wifi: bool = True) -> None:
+    def logout(self, disconnect_wifi: bool = True, pause_auto_reconnect: bool = True) -> None:
         with self.state_lock:
-            self.user_signed_out = True
+            if pause_auto_reconnect:
+                self.user_signed_out = True
             magic = self.current_magic
             target_host = self.portal_host if (self.portal_host and self.portal_host != "-") else self.gateway_ip
             is_opn = (self.portal_type == "opnsense" or self.portal_port == 8000)
@@ -1938,6 +2362,13 @@ class GitWifiCore:
             except (RequestException, Timeout) as e:
                 self.log(f"Portal logout endpoint ping: {e}")
 
+        # Clear session cookies to avoid carrying old auth tokens into the next session
+        with self.session_lock:
+            try:
+                self.session.cookies.clear()
+            except Exception:
+                pass
+
         # 2. Safely Disconnect OS Wi-Fi Adapter (Bulletproof)
         if disconnect_wifi:
             try:
@@ -1972,19 +2403,23 @@ class GitWifiCore:
             self.keepalive_url = None
             self.current_magic = None
             self.session_start = None
-            # Bug 23 fix: Do not override user_signed_out if the user clicked Force Re-Probe while logout was running
-            if not self.user_signed_out:
+            if pause_auto_reconnect:
                 self.user_signed_out = True
+            else:
+                self.user_signed_out = False
 
-        # Purge cached magic tokens from memory and storage on explicit sign-out
+        # Purge cached magic tokens from memory and storage on explicit sign-out or session reset
         # Note: _config_lock acquired outside state_lock to maintain consistent lock ordering
         with _config_lock:
             self.config["last_magic"] = ""
             save_settings(self.config)
 
-        self.cycle_event.set()
-        self.set_status("Logged Out")
-        self.log("Session signed out. Auto-reconnect paused — click Force Re-Probe to reconnect.")
+        if pause_auto_reconnect:
+            self.cycle_event.set()
+            self.set_status("Logged Out")
+            self.log("Session signed out. Auto-reconnect paused — click Force Re-Probe to reconnect.")
+        else:
+            self.set_status("Switching Profile...")
 
 # ==========================================
 # MODERN CLEAN WINDOWS GUI & TRAY APP
@@ -2004,7 +2439,7 @@ class GitWifiApp:
         self.editor_mode: str = "new" 
         self.editing_index: Optional[int] = None
 
-        self.core = GitWifiCore(status_cb=self._on_status, log_cb=self._on_log, profile_switch_cb=self._on_auto_profile_switch)
+        self.core = GitWifiCore(status_cb=self._on_status, log_cb=self._on_log, profile_switch_cb=self._on_auto_profile_switch, notify_cb=self._on_notify)
         self.last_notified_state = None
 
         self._apply_dark_theme()
@@ -2027,22 +2462,77 @@ class GitWifiApp:
             else:
                 self.root.iconify()
 
+    def _on_notify(self, title: str, msg: str):
+        if HAS_PYSTRAY and getattr(self, "tray", None) and self.core.config.get("desktop_notifications", True):
+            try:
+                self.tray.notify(msg, title)
+            except Exception:
+                pass
+
     def _apply_app_icon(self) -> None:
-        icon_path = os.path.join(get_app_dir(), "app_icon.ico")
-        if not os.path.exists(icon_path):
+        icon_path = get_resource_path("app_icon.ico")
+        if not os.path.exists(icon_path) or os.path.getsize(icon_path) < 1000:
             try:
                 _generate_app_icon(icon_path)
             except Exception:
                 pass
+
+        # 1. Native Windows Win32 icon loading directly from multi-resolution .ico
         try:
-            self.root.iconbitmap(icon_path)
+            self.root.iconbitmap(default=icon_path)
+        except Exception:
+            try:
+                self.root.iconbitmap(icon_path)
+            except Exception:
+                pass
+
+        # 2. Multi-resolution iconphoto: pass all standard sizes (16, 24, 32, 48, 64, 128, 256)
+        # so Tkinter & Windows Shell use the exact pixel-matched icon for title bar, taskbar & Alt+Tab
+        try:
+            im = Image.open(icon_path)
+            self._icon_photos = []
+            sizes = [16, 24, 32, 48, 64, 128, 256]
+            if hasattr(im, "ico") and hasattr(im.ico, "sizes"):
+                available = im.ico.sizes()
+                for sz in sizes:
+                    if (sz, sz) in available:
+                        frame = im.ico.getimage((sz, sz))
+                    else:
+                        frame = im.resize((sz, sz), Image.Resampling.LANCZOS)
+                    self._icon_photos.append(ImageTk.PhotoImage(frame))
+            else:
+                for sz in sizes:
+                    frame = im.resize((sz, sz), Image.Resampling.LANCZOS)
+                    self._icon_photos.append(ImageTk.PhotoImage(frame))
+
+            if self._icon_photos:
+                self.root.iconphoto(True, *self._icon_photos)
         except Exception:
             pass
+
+        # 3. Direct Win32 WM_SETICON for pixel-perfect taskbar rendering on Windows
         try:
-            img = Image.open(icon_path)
-            tk_img = ImageTk.PhotoImage(img)
-            self.root.iconphoto(True, tk_img)
-            self._icon_ref = tk_img
+            self.root.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+            if hwnd:
+                IMAGE_ICON = 1
+                LR_LOADFROMFILE = 0x00000010
+                WM_SETICON = 0x0080
+                ICON_SMALL = 0
+                ICON_BIG = 1
+
+                cx_icon = ctypes.windll.user32.GetSystemMetrics(11) # SM_CXICON (taskbar/Alt-Tab: 32 or 48)
+                cy_icon = ctypes.windll.user32.GetSystemMetrics(12)
+                cx_smicon = ctypes.windll.user32.GetSystemMetrics(49) # SM_CXSMICON (titlebar: 16 or 24)
+                cy_smicon = ctypes.windll.user32.GetSystemMetrics(50)
+
+                h_big = ctypes.windll.user32.LoadImageW(None, os.path.abspath(icon_path), IMAGE_ICON, cx_icon, cy_icon, LR_LOADFROMFILE)
+                h_small = ctypes.windll.user32.LoadImageW(None, os.path.abspath(icon_path), IMAGE_ICON, cx_smicon, cy_smicon, LR_LOADFROMFILE)
+
+                if h_big:
+                    ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
+                if h_small:
+                    ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_small)
         except Exception:
             pass
 
@@ -2146,6 +2636,10 @@ class GitWifiApp:
         self.lbl_gw = ttk.Label(card1, text="-", style="Card.TLabel")
         self.lbl_gw.grid(row=4, column=1, sticky=tk.W, padx=10, pady=3)
 
+        ttk.Label(card1, text="Daily Quota (10 GB Cap):", style="Card.TLabel").grid(row=5, column=0, sticky=tk.W, pady=3)
+        self.lbl_dash_quota = ttk.Label(card1, text="0.00 GB / 10.00 GB (0%)", font=("Segoe UI", 10, "bold"), style="Card.TLabel", foreground="#38bdf8")
+        self.lbl_dash_quota.grid(row=5, column=1, sticky=tk.W, padx=10, pady=3)
+
         card2 = ttk.Frame(frame, style="Card.TFrame", padding=16)
         card2.pack(fill=tk.X, padx=14, pady=6)
 
@@ -2154,6 +2648,7 @@ class GitWifiApp:
         bar = tk.Frame(card2, bg=self.card)
         bar.pack(fill=tk.X)
         ttk.Button(bar, text="⚡ Force Re-Probe", style="Action.TButton", command=self._force_probe).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(bar, text="🔀 Rotate Account", style="Action.TButton", command=self._rotate_profile_now).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(bar, text="🛑 Disconnect & Sign Out", style="Danger.TButton", command=lambda: threading.Thread(target=self.core.logout, daemon=True).start()).pack(side=tk.LEFT)
 
     def _init_profiles(self):
@@ -2174,7 +2669,8 @@ class GitWifiApp:
         r_btns.pack(fill=tk.X, pady=6)
         ttk.Button(r_btns, text="⭐ Set Active", style="Action.TButton", command=self._set_active_profile).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(r_btns, text="✏️ Edit", style="Action.TButton", command=self._start_edit_profile).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(r_btns, text="🗑 Delete", style="Danger.TButton", command=self._del_profile).pack(side=tk.LEFT)
+        ttk.Button(r_btns, text="🗑 Delete", style="Danger.TButton", command=self._del_profile).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(r_btns, text="🔀 Rotate", style="Action.TButton", command=self._rotate_profile_now).pack(side=tk.LEFT)
 
         right = ttk.Frame(box, style="Card.TFrame", padding=14)
         right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -2364,6 +2860,17 @@ class GitWifiApp:
         self.lbl_live_portal_target = ttk.Label(card_details, text="-", style="Card.TLabel")
         self.lbl_live_portal_target.grid(row=2, column=3, sticky=tk.W, padx=10, pady=3)
 
+        ttk.Label(card_details, text="Daily Quota (10 GB Cap):", style="Card.TLabel").grid(row=3, column=0, sticky=tk.W, pady=(8, 3))
+        self.lbl_live_quota_used = ttk.Label(card_details, text="0.00 GB / 10.00 GB (0%)", font=("Segoe UI", 10, "bold"), style="Card.TLabel", foreground="#38bdf8")
+        self.lbl_live_quota_used.grid(row=3, column=1, sticky=tk.W, padx=10, pady=(8, 3))
+
+        ttk.Label(card_details, text="Auto-Rotation Status:", style="Card.TLabel").grid(row=3, column=2, sticky=tk.W, pady=(8, 3))
+        self.lbl_live_rotation_status = ttk.Label(card_details, text="Active", font=("Segoe UI", 10, "bold"), style="Card.TLabel", foreground="#2ecc71")
+        self.lbl_live_rotation_status.grid(row=3, column=3, sticky=tk.W, padx=10, pady=(8, 3))
+
+        self.live_quota_pbar = ttk.Progressbar(card_details, orient=tk.HORIZONTAL, mode='determinate', maximum=100.0)
+        self.live_quota_pbar.grid(row=4, column=0, columnspan=4, sticky=tk.EW, pady=(6, 6))
+
         # Bottom History Chart / Log Box
         card_hist = ttk.Frame(frame, style="Card.TFrame", padding=14)
         card_hist.pack(fill=tk.BOTH, expand=True, padx=14, pady=(6, 12))
@@ -2547,7 +3054,30 @@ class GitWifiApp:
         self.e_idle_mins.bind("<Return>", self._save_idle_mins)
         ttk.Label(idle_bar, text="minutes", style="Card.TLabel").pack(side=tk.LEFT)
 
-        # --- SECTION 2: Network & DNS Preferences ---
+        # --- SECTION 2: Daily Quota & Multi-Account Rotation (10 GB Limit) ---
+        card_quota = ttk.Frame(scroll_content, style="Card.TFrame", padding=14)
+        card_quota.pack(fill=tk.X, padx=12, pady=6)
+
+        ttk.Label(card_quota, text="Daily Quota & Multi-Account Rotation (10 GB Limit)", font=("Segoe UI", 11, "bold"), style="Card.TLabel").pack(anchor=tk.W, pady=(0, 4))
+        ttk.Label(card_quota, text="Campus firewall enforces a 10 GB daily bandwidth limit per account. Auto-rotation switches to backup profiles seamlessly.", font=("Segoe UI", 8), style="Card.TLabel", foreground=self.dim).pack(anchor=tk.W, pady=(0, 6))
+
+        self.auto_rotate_quota_var = tk.BooleanVar(value=self.core.config.get("auto_rotate_on_quota", True))
+        tk.Checkbutton(card_quota, text="Auto-rotate to next profile when daily quota limit (10 GB) is reached", variable=self.auto_rotate_quota_var, bg=self.card, fg="#ffffff", selectcolor="#121316", activebackground=self.card, activeforeground="#ffffff", command=self._save_toggles).pack(anchor=tk.W, pady=2)
+
+        self.auto_rotate_disc_var = tk.BooleanVar(value=self.core.config.get("auto_rotate_on_disconnect", False))
+        tk.Checkbutton(card_quota, text="Auto-rotate to next profile on repeated login rejections or sudden disconnects", variable=self.auto_rotate_disc_var, bg=self.card, fg="#ffffff", selectcolor="#121316", activebackground=self.card, activeforeground="#ffffff", command=self._save_toggles).pack(anchor=tk.W, pady=2)
+
+        quota_cfg_bar = tk.Frame(card_quota, bg=self.card)
+        quota_cfg_bar.pack(fill=tk.X, pady=4)
+        ttk.Label(quota_cfg_bar, text="Daily Quota Limit per Account:", style="Card.TLabel").pack(side=tk.LEFT)
+        self.e_quota_gb = tk.Entry(quota_cfg_bar, width=5, bg=self.bg, fg="#ffffff", insertbackground="#fff", bd=0, font=("Segoe UI", 9))
+        self.e_quota_gb.insert(0, str(self.core.config.get("daily_quota_limit_gb", 10.0)))
+        self.e_quota_gb.pack(side=tk.LEFT, padx=6)
+        ttk.Label(quota_cfg_bar, text="GB", style="Card.TLabel").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(quota_cfg_bar, text="Apply Quota Limit", style="Action.TButton", command=self._save_quota_limit).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(quota_cfg_bar, text="🧹 Reset Today's Usage", style="Danger.TButton", command=self._reset_today_usage).pack(side=tk.LEFT)
+
+        # --- SECTION 3: Network & DNS Preferences ---
         card2 = ttk.Frame(scroll_content, style="Card.TFrame", padding=14)
         card2.pack(fill=tk.X, padx=12, pady=6)
 
@@ -2697,6 +3227,32 @@ class GitWifiApp:
             self.e_idle_mins.delete(0, tk.END)
             self.e_idle_mins.insert(0, str(valid_val))
 
+    def _save_quota_limit(self):
+        val_text = self.e_quota_gb.get().strip()
+        try:
+            val = max(0.1, float(val_text))
+            with _config_lock:
+                self.core.config["daily_quota_limit_gb"] = val
+                save_settings(self.core.config)
+            self.core.log(f"[Config] Daily account quota limit updated to {val:.1f} GB.")
+            messagebox.showinfo("Quota Limit Saved", f"Daily quota limit set to {val:.1f} GB per account.")
+            self._refresh_profiles_view()
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Please enter a valid numeric value for the daily quota limit.")
+
+    def _reset_today_usage(self):
+        if messagebox.askyesno("Reset Usage", "Reset all profile bandwidth usage counters recorded for today?"):
+            today_str = datetime.date.today().isoformat()
+            with self.core.quota_lock:
+                with _config_lock:
+                    if "daily_usage_tracking" in self.core.config and isinstance(self.core.config["daily_usage_tracking"], dict):
+                        self.core.config["daily_usage_tracking"][today_str] = {}
+                        save_settings(self.core.config)
+            self.core.quota_warning_sent_80.clear()
+            self.core.quota_warning_sent_95.clear()
+            self.core.log("[Quota] Reset today's usage statistics across all accounts.")
+            self._refresh_profiles_view()
+
     def _export_config(self):
         dest = filedialog.asksaveasfilename(
             title="Backup GITwifi Configuration",
@@ -2765,6 +3321,13 @@ class GitWifiApp:
             if hasattr(self, "e_idle_mins"):
                 self.e_idle_mins.delete(0, tk.END)
                 self.e_idle_mins.insert(0, str(new_cfg.get("idle_logout_minutes", 30)))
+            if hasattr(self, "auto_rotate_quota_var"):
+                self.auto_rotate_quota_var.set(new_cfg.get("auto_rotate_on_quota", True))
+            if hasattr(self, "auto_rotate_disc_var"):
+                self.auto_rotate_disc_var.set(new_cfg.get("auto_rotate_on_disconnect", False))
+            if hasattr(self, "e_quota_gb"):
+                self.e_quota_gb.delete(0, tk.END)
+                self.e_quota_gb.insert(0, str(new_cfg.get("daily_quota_limit_gb", 10.0)))
             if hasattr(self, "ua_selection"):
                 self.ua_selection.set(new_cfg.get("spoof_ua_mode", "Windows Chrome"))
                 self._refresh_ua_preview()
@@ -3032,6 +3595,36 @@ class GitWifiApp:
                 except Exception:
                     pass
 
+            # 3b. Update Daily Quota Telemetry & Multi-Account Rotation
+            try:
+                self.core.check_quota_and_rotate_if_needed()
+                limit_gb = float(self.core.config.get("daily_quota_limit_gb", 10.0))
+                limit_bytes = int(limit_gb * (1024**3))
+                today_used_bytes = self.core.get_active_profile_daily_total()
+                today_used_gb = today_used_bytes / (1024**3)
+                pct = min(100.0, (today_used_bytes / limit_bytes * 100.0)) if limit_bytes > 0 else 0.0
+
+                if hasattr(self, "lbl_dash_quota"):
+                    col = "#2ecc71" if pct < 70 else ("#f1c40f" if pct < 90 else ("#e67e22" if pct < 98 else "#e74c3c"))
+                    self.lbl_dash_quota.config(text=f"{today_used_gb:.2f} GB / {limit_gb:.1f} GB ({pct:.1f}%)", foreground=col)
+
+                if hasattr(self, "lbl_live_quota_used"):
+                    col = "#2ecc71" if pct < 70 else ("#f1c40f" if pct < 90 else ("#e67e22" if pct < 98 else "#e74c3c"))
+                    self.lbl_live_quota_used.config(text=f"{today_used_gb:.2f} GB / {limit_gb:.1f} GB ({pct:.1f}%)", foreground=col)
+                if hasattr(self, "live_quota_pbar"):
+                    self.live_quota_pbar["value"] = pct
+                if hasattr(self, "lbl_live_rotation_status"):
+                    auto_rot = self.core.config.get("auto_rotate_on_quota", True)
+                    n_prof = len(self.core.config.get("profiles", []))
+                    if auto_rot and n_prof > 1:
+                        self.lbl_live_rotation_status.config(text=f"Active ({n_prof} Accounts)", foreground="#2ecc71")
+                    elif auto_rot:
+                        self.lbl_live_rotation_status.config(text="Single Account (Add more)", foreground="#f1c40f")
+                    else:
+                        self.lbl_live_rotation_status.config(text="Disabled", foreground="#e74c3c")
+            except Exception:
+                pass
+
             # 4. Idle Auto-Logout Evaluation (Feature 6 & Bug 8/44 fix)
             if self.core.status == "Connected" and self.core.config.get("idle_logout_enabled", False):
                 with self.core.state_lock:
@@ -3079,10 +3672,16 @@ class GitWifiApp:
         self.profiles_lb.delete(0, tk.END)
         profiles = self.core.config.get("profiles", [])
         act = self.core.config.get("active_profile_index", 0)
+        today_str = datetime.date.today().isoformat()
+        limit_gb = float(self.core.config.get("daily_quota_limit_gb", 10.0))
         for i, p in enumerate(profiles):
             mark = "⭐ " if i == act else "   "
             gw_tag = f" [{p['gateway_match']}]" if p.get("gateway_match") else ""
-            self.profiles_lb.insert(tk.END, f"{mark}{p.get('name', 'Profile')} ({p.get('username')}){gw_tag}")
+            uname = p.get("username", "")
+            in_b, out_b = self.core.get_profile_daily_usage(uname, today_str)
+            used_gb = (in_b + out_b) / (1024**3)
+            q_info = f" | {used_gb:.2f}/{limit_gb:.1f} GB" if uname else ""
+            self.profiles_lb.insert(tk.END, f"{mark}{p.get('name', 'Profile')} ({uname}){q_info}{gw_tag}")
 
         active_prof = self.core.get_active_profile()
         if active_prof:
@@ -3171,9 +3770,31 @@ class GitWifiApp:
             def _edit_probe_worker():
                 if was_connected:
                     self.core.log("Logging out of previous session before authenticating updated active profile...")
-                    self.core.logout(disconnect_wifi=False)
+                    self.core.logout(disconnect_wifi=False, pause_auto_reconnect=False)
+                    with self.core.state_lock:
+                        self.core.keepalive_url = None
+                        self.core.current_magic = None
+                    with self.core.session_lock:
+                        try:
+                            self.core.session.cookies.clear()
+                        except Exception:
+                            pass
+                    time.sleep(2.5)
                 self._force_probe(reconnect_wlan=False)
             threading.Thread(target=_edit_probe_worker, daemon=True).start()
+
+    def _rotate_profile_now(self):
+        profiles = self.core.config.get("profiles", [])
+        if len(profiles) <= 1:
+            messagebox.showinfo(
+                "Multi-Account Rotation",
+                "You only have 1 profile configured. Please add another profile (e.g. secondary student account or roommate account) in the Profiles tab to rotate between accounts."
+            )
+            return
+        success = self.core.rotate_to_next_profile(reason="manual_rotation")
+        if success:
+            self._refresh_profiles_view()
+            self._start_new_profile()
 
     def _set_active_profile(self):
         sel = self.profiles_lb.curselection()
@@ -3201,7 +3822,17 @@ class GitWifiApp:
         def _switch_worker():
             if was_connected:
                 self.core.log("Logging out of previous session before authenticating new profile...")
-                self.core.logout(disconnect_wifi=False)
+                self.core.logout(disconnect_wifi=False, pause_auto_reconnect=False)
+                with self.core.state_lock:
+                    self.core.keepalive_url = None
+                    self.core.current_magic = None
+                with self.core.session_lock:
+                    try:
+                        self.core.session.cookies.clear()
+                    except Exception:
+                        pass
+                # 2.5s grace period: allow OPNsense/pf backend to clear firewall session tables
+                time.sleep(2.5)
             self._force_probe(reconnect_wlan=False)
 
         threading.Thread(target=_switch_worker, daemon=True).start()
@@ -3257,7 +3888,16 @@ class GitWifiApp:
             def _del_probe_worker():
                 if was_connected:
                     self.core.log("Logging out of previous session before authenticating new profile...")
-                    self.core.logout(disconnect_wifi=False)
+                    self.core.logout(disconnect_wifi=False, pause_auto_reconnect=False)
+                    with self.core.state_lock:
+                        self.core.keepalive_url = None
+                        self.core.current_magic = None
+                    with self.core.session_lock:
+                        try:
+                            self.core.session.cookies.clear()
+                        except Exception:
+                            pass
+                    time.sleep(2.5)
                 if profiles:
                     self._force_probe(reconnect_wlan=False)
                 else:
@@ -3304,6 +3944,15 @@ class GitWifiApp:
             if hasattr(self, "e_idle_mins"):
                 try:
                     self.core.config["idle_logout_minutes"] = max(1, int(self.e_idle_mins.get().strip()))
+                except ValueError:
+                    pass
+            if hasattr(self, "auto_rotate_quota_var"):
+                self.core.config["auto_rotate_on_quota"] = self.auto_rotate_quota_var.get()
+            if hasattr(self, "auto_rotate_disc_var"):
+                self.core.config["auto_rotate_on_disconnect"] = self.auto_rotate_disc_var.get()
+            if hasattr(self, "e_quota_gb"):
+                try:
+                    self.core.config["daily_quota_limit_gb"] = max(0.1, float(self.e_quota_gb.get().strip()))
                 except ValueError:
                     pass
             if hasattr(self, "doh_var"):
@@ -3603,12 +4252,56 @@ class GitWifiApp:
             self.tray_action_queue.put(fn)
 
     def _create_icon(self, color="red"):
-        im = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-        d = ImageDraw.Draw(im)
-        d.ellipse([6, 6, 58, 58], fill=color)
-        d.ellipse([20, 20, 44, 44], fill="white")
-        d.ellipse([27, 27, 37, 37], fill=color)
-        return im
+        if not hasattr(self, "_tray_icon_cache"):
+            self._tray_icon_cache = {}
+        if color in self._tray_icon_cache:
+            return self._tray_icon_cache[color]
+
+        master_sz = 512
+        img = Image.new("RGBA", (master_sz, master_sz), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        cx, cy = master_sz // 2, master_sz // 2
+        r = master_sz // 2 - 16
+
+        # Base background circle - Deep GIT Navy
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#082352")
+        draw.ellipse([cx - r + 8, cy - r + 8, cx + r - 8, cy + r - 8], outline=(56, 189, 248, 180), width=6)
+
+        # High definition Wi-Fi arcs
+        arc_configs = [
+            (170, 26, "#38bdf8"),
+            (120, 22, "#2563eb"),
+            (70, 18, "#1d4ed8")
+        ]
+        for rad, w, col in arc_configs:
+            x0, y0 = cx - rad, cy - rad + 40
+            x1, y1 = cx + rad, cy + rad + 40
+            draw.arc([x0, y0, x1, y1], start=215, end=325, fill=col, width=w)
+
+        # Center Wi-Fi dot
+        dot_r = 26
+        dot_y = cy + 100
+        draw.ellipse([cx - dot_r, dot_y - dot_r, cx + dot_r, dot_y + dot_r], fill="#38bdf8")
+        draw.ellipse([cx - 12, dot_y - 12, cx + 12, dot_y + 12], fill="#ffffff")
+
+        # Status badge at bottom-right corner
+        badge_colors = {
+            "green": "#10b981",
+            "orange": "#f59e0b",
+            "red": "#ef4444"
+        }
+        b_col = badge_colors.get(color, "#ef4444")
+        bx, by = master_sz - 95, master_sz - 95
+        br = 70
+        # Dark outline around badge to separate cleanly from background
+        draw.ellipse([bx - br - 12, by - br - 12, bx + br + 12, by + br + 12], fill="#051329")
+        draw.ellipse([bx - br, by - br, bx + br, by + br], fill=b_col)
+        draw.ellipse([bx - br + 22, by - br + 22, bx + br - 22, by + br - 22], fill="#ffffff")
+
+        # Downsample with Lanczos to crisp 64x64 for Windows System Tray
+        tray_img = img.resize((64, 64), Image.Resampling.LANCZOS)
+        self._tray_icon_cache[color] = tray_img
+        return tray_img
 
     def _setup_tray_icon(self):
         if not HAS_PYSTRAY:
@@ -3618,6 +4311,7 @@ class GitWifiApp:
             menu = pystray.Menu(
                 item("Open GITwifi", lambda icon, it: self._tray_dispatch(self.restore_from_tray), default=True),
                 item("Force Re-Probe", lambda icon, it: self._tray_dispatch(self._force_probe)),
+                item("Rotate Account (Next)", lambda icon, it: self._tray_dispatch(self._rotate_profile_now)),
                 item("Logout", lambda icon, it: self._tray_dispatch(
                     lambda: threading.Thread(target=self.core.logout, daemon=True).start()
                 )),
